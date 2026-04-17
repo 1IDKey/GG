@@ -2,7 +2,7 @@ Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
 
-$ScriptVersion     = '1.2.0'
+$ScriptVersion     = '1.2.1'
 $ManifestUrl       = 'https://raw.githubusercontent.com/1IDKey/GG/main/manifest.json'
 $ScriptRawBase     = 'https://raw.githubusercontent.com/1IDKey/GG/main'
 $DefaultVersionDir = Join-Path $env:APPDATA '.minecraft\versions\GG'
@@ -542,6 +542,31 @@ $lnkVersion.Add_LinkClicked({
     }
 })
 
+function Set-TLauncherVersion {
+    param($version)
+    $prop = Join-Path $env:APPDATA '.tlauncher\tlauncher-2.0.properties'
+    if (-not (Test-Path $prop)) { return $false }
+    try {
+        $lines = Get-Content $prop
+        $keys = @('login.version.lastchoice','minecraft.client.version','minecraft.version.manager.lastversion')
+        $changed = $false
+        $out = foreach ($line in $lines) {
+            $matched = $false
+            foreach ($k in $keys) {
+                if ($line -match "^$([regex]::Escape($k))=") {
+                    $matched = $true
+                    $changed = $true
+                    "$k=$version"
+                    break
+                }
+            }
+            if (-not $matched) { $line }
+        }
+        if ($changed) { Set-Content -Path $prop -Value $out -Encoding ASCII }
+        return $changed
+    } catch { return $false }
+}
+
 $btnPlay.Add_Click({
     $tl = Load-TLauncherPath
     if (-not $tl -or -not (Test-Path $tl)) {
@@ -553,7 +578,8 @@ $btnPlay.Add_Click({
         Save-TLauncherPath $tl
     }
     try {
-        Start-Process -FilePath $tl -ArgumentList @('--version','GG')
+        [void](Set-TLauncherVersion 'GG')
+        Start-Process -FilePath $tl
         Set-Status "Launched: $tl"
     } catch {
         Set-Status "Launch failed: $($_.Exception.Message)"
