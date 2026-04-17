@@ -4,29 +4,29 @@ $ProgressPreference = 'SilentlyContinue'
 $ManifestUrl = 'https://raw.githubusercontent.com/1IDKey/GG/main/manifest.json'
 $ModsDir = Join-Path $env:APPDATA '.minecraft\versions\GG\mods'
 
-function Write-Info    { param($m) Write-Host $m -ForegroundColor Cyan }
-function Write-Ok      { param($m) Write-Host $m -ForegroundColor Green }
-function Write-Warn    { param($m) Write-Host $m -ForegroundColor Yellow }
-function Write-Err     { param($m) Write-Host $m -ForegroundColor Red }
+function Write-Info { param($m) Write-Host $m -ForegroundColor Cyan }
+function Write-Ok   { param($m) Write-Host $m -ForegroundColor Green }
+function Write-Warn { param($m) Write-Host $m -ForegroundColor Yellow }
+function Write-Err  { param($m) Write-Host $m -ForegroundColor Red }
 
 Write-Info "=== GG Modpack Updater ==="
-Write-Host "Папка модов: $ModsDir"
+Write-Host "Mods folder: $ModsDir"
 
 if (-not (Test-Path $ModsDir)) {
-    Write-Err "Папка не найдена. Убедись, что установлена версия GG и игра запускалась хотя бы раз."
+    Write-Err "Mods folder not found. Install version GG and launch the game at least once."
     exit 1
 }
 
-Write-Host "Загружаю манифест..."
+Write-Host "Fetching manifest..."
 try {
     $manifest = Invoke-RestMethod -Uri $ManifestUrl -UseBasicParsing
 } catch {
-    Write-Err "Не удалось скачать манифест: $($_.Exception.Message)"
+    Write-Err "Failed to fetch manifest: $($_.Exception.Message)"
     exit 1
 }
 
-Write-Host "Версия манифеста: $($manifest.version)"
-Write-Host "Модов в манифесте: $($manifest.mods.Count)"
+Write-Host "Manifest version: $($manifest.version)"
+Write-Host "Mods in manifest: $($manifest.mods.Count)"
 Write-Host ""
 
 $wanted = @{}
@@ -47,12 +47,12 @@ foreach ($m in $manifest.mods) {
 }
 
 if ($toDelete.Count -eq 0 -and $toDownload.Count -eq 0) {
-    Write-Ok "Всё актуально, обновлять нечего."
+    Write-Ok "Already up to date."
     exit 0
 }
 
-Write-Warn "Будет удалено:   $($toDelete.Count)"
-Write-Warn "Будет скачано:   $($toDownload.Count)"
+Write-Warn "To delete:   $($toDelete.Count)"
+Write-Warn "To download: $($toDownload.Count)"
 Write-Host ""
 
 foreach ($f in $toDelete) {
@@ -69,10 +69,10 @@ foreach ($m in $toDownload) {
     try {
         Invoke-WebRequest -Uri $m.url -OutFile $dest -UseBasicParsing
     } catch {
-        Write-Err "  Ошибка: $($_.Exception.Message)"
+        Write-Err "  Error: $($_.Exception.Message)"
         if (Test-Path $dest) { Remove-Item $dest -Force }
     }
 }
 
 Write-Host ""
-Write-Info "=== Готово ==="
+Write-Info "=== Done ==="
