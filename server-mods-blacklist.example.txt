@@ -1,0 +1,101 @@
+# Server-side mod deploy blacklist
+# Rename this file to "server-mods-blacklist.txt" to activate.
+# Patterns here are SKIPPED when deploying to server (client-only mods).
+# One pattern per line. Wildcards: *  ?
+# Patterns match mod filenames.
+# Lines starting with # are comments.
+#
+# Derived from observed client vs server diff (GG Apr 2026).
+# Edit freely — admin knows their modpack best.
+
+# Shaders / rendering
+oculus-*.jar
+oculus-flywheel-compat-*.jar
+embeddium-*.jar
+embeddiumplus-*.jar
+EuphoriaPatcher-*.jar
+better-clouds-*.jar
+
+# GUI / HUD
+ImmersiveUI-*.jar
+ObsidianUI-*.jar
+ItemBorders-*.jar
+PickUpNotifier-*.jar
+BetterAdvancements-*.jar
+AdvancementPlaques-*.jar
+Controlling-*.jar
+Searchables-*.jar
+ForgeConfigScreens-*.jar
+AdaptiveTooltips-*.jar
+BetterF3-*.jar
+Highlighter-*.jar
+dynamiccrosshair-*.jar
+namepain-*.jar
+titlebarchanger-*.jar
+panorama_screens-*.jar
+screenshot_viewer-*.jar
+Prism-*.jar
+fancymenu_*.jar
+
+# Sound / music
+AmbientSounds_*.jar
+DripSounds-*.jar
+entity_sound_features_*.jar
+melody_forge_*.jar
+extrasounds-*.jar
+sound-physics-remastered-*.jar
+infinite-music-*.jar
+
+# Animation / effects (client-only)
+chatanimation-*.jar
+notenoughanimations-*.jar
+smoothswapping-*.jar
+explosive-enhancement-*.jar
+
+# Camera
+CameraOverhaul-*.jar
+ShoulderSurfing-*.jar
+
+# Client-only optimizations
+ImmediatelyFast-*.jar
+BadOptimizations-*.jar
+smoothboot*.jar
+smoothchunk-*.jar
+dynamic-fps-*.jar
+saturn-*.jar
+entityculling-*.jar
+
+# Skins / identity
+CustomSkinLoader_*.jar
+figura-*.jar
+chat_heads-*.jar
+tl_skin_cape_*.jar
+SimpleRPC-*.jar
+PresenceFootsteps-*.jar
+
+# Textures / models (client)
+entity_model_features_*.jar
+entity_texture_features_*.jar
+citresewn-*.jar
+modelfix-*.jar
+ArmorTrimItemFix-*.jar
+CullLessLeaves-*.jar
+
+# Particles / weather (visual)
+particular-*.jar
+particle-rain-*.jar
+particle_core-*.jar
+BiomeParticleWeather-*.jar
+fallingleaves-*.jar
+visuality-*.jar
+wakes-*.jar
+
+# Inventory / click
+MouseTweaks-*.jar
+SmoothScrollingRefurbished*.jar
+ItemPhysicLite_*.jar
+raised-forge-*.jar
+konkrete_*.jar
+
+# Misc client
+BetterSmithingTable-*.jar

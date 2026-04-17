@@ -176,6 +176,20 @@ $btnPublish.Font = New-Object System.Drawing.Font('Segoe UI', 9, [System.Drawing
 $btnPublish.Enabled = $false
 $form.Controls.Add($btnPublish)
 
+$btnServer = New-Object System.Windows.Forms.Button
+$btnServer.Text = 'Deploy server...'
+$btnServer.Location = New-Object System.Drawing.Point(836, 634)
+$btnServer.Size = New-Object System.Drawing.Size(120, 32)
+$btnServer.Add_Click({
+    $deployScript = Join-Path $PSScriptRoot 'server-deploy.ps1'
+    if (Test-Path $deployScript) {
+        Start-Process -FilePath 'powershell' -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File',$deployScript)
+    } else {
+        [System.Windows.Forms.MessageBox]::Show('server-deploy.ps1 not found.', 'Deploy', 'OK', 'Error') | Out-Null
+    }
+})
+$form.Controls.Add($btnServer)
+
 $btnClose = New-Object System.Windows.Forms.Button
 $btnClose.Text = 'Close'
 $btnClose.Location = New-Object System.Drawing.Point(964, 634)

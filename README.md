@@ -85,6 +85,32 @@ xaeros*.jar
 
 Игроки кликают `update-gui.bat` — синкаются на твоё состояние.
 
+### Деплой на сервер (Bisquit.Host / Pterodactyl)
+
+**Установка (один раз):**
+
+1. Сгенерь SSH-ключ если его нет: `ssh-keygen -t ed25519`.
+2. Открой `%USERPROFILE%\.ssh\id_ed25519.pub`, скопируй содержимое.
+3. В панели Bisquit.Host: **Аккаунт → SSH-ключи → Добавить**, вставь ключ.
+4. Проверь подключение (из bash):
+   ```
+   echo ls | sftp -P 2022 jqb6h3dm.8696ab23@flux.bisquit.host
+   ```
+
+**Деплой:**
+
+1. В publish-gui жми **Deploy server...** (или запусти `server-deploy.bat` напрямую).
+2. Окно покажет 3 колонки:
+   - **Should be on server** — что должно быть (твой mods minus blacklist).
+   - **To upload** — чего нет на сервере.
+   - **To delete** — лишние на сервере.
+3. Проверь. Жми **Deploy**. Скрипт зальёт/удалит по SFTP.
+4. **Перезапусти сервер** через панель (автоматически не перезапускаем пока).
+
+**Blacklist:**
+
+Копируй [`server-mods-blacklist.example.txt`](server-mods-blacklist.example.txt) в `server-mods-blacklist.txt` и редактируй. Туда вписываются клиент-онли моды (shaders, GUI, sounds, анимации, камера, отпимизации клиента, скины/Figura) — они пропускаются при деплое на сервер. По умолчанию используется example-файл если нет своего.
+
 ### Добавить/убрать синкуемые папки
 
 В `publish-gui.ps1` строка:
