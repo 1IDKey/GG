@@ -10,10 +10,13 @@ $BlacklistExample    = Join-Path $PSScriptRoot 'server-mods-blacklist.example.tx
 $DefaultVersionDir   = Join-Path $env:APPDATA '.minecraft\versions\GG'
 
 $DefaultServerConfig = @{
-    host     = 'flux.bisquit.host'
-    port     = 2022
-    user     = 'jqb6h3dm.8696ab23'
-    modsPath = '/mods'
+    host       = 'flux.bisquit.host'
+    port       = 2022
+    user       = 'jqb6h3dm.8696ab23'
+    modsPath   = '/mods'
+    panelBase  = 'https://mgr.bisquit.host'
+    serverId   = '8696ab23'
+    apiKey     = ''
 }
 
 function Load-ServerConfig {
@@ -75,13 +78,71 @@ function Get-ServerMods {
     return $jars
 }
 
+function Get-JHash { param([int]$b)
+    $x = 123456789; $k = 0
+    for ($i = 0; $i -lt 1677696; $i++) {
+        $x = (($x + $b) -bxor ($x + ($x % 3) + ($x % 17) + $b) -bxor $i) % 16776960
+        if (($x % 117) -eq 0) { $k = ($k + 1) % 1111 }
+    }
+    return $k
+}
+
+function New-PterodactylSession {
+    param($cfg)
+    $ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+    $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+    $session.UserAgent = $ua
+    # Probe to obtain __js_p_ cookie from StormWall
+    try {
+        $null = Invoke-WebRequest -Uri "$($cfg.panelBase)/api/client" -WebSession $session -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop
+    } catch {}
+    $jsCookie = $null
+    foreach ($c in $session.Cookies.GetCookies($cfg.panelBase)) {
+        if ($c.Name -eq '__js_p_') { $jsCookie = $c }
+    }
+    if (-not $jsCookie) { throw 'StormWall __js_p_ cookie not received' }
+    $code = [int](($jsCookie.Value -split ',')[0])
+    $jhash = Get-JHash $code
+    $domain = ([uri]$cfg.panelBase).Host
+    $session.Cookies.Add((New-Object System.Net.Cookie('__jhash_', "$jhash", '/', $domain)))
+    $session.Cookies.Add((New-Object System.Net.Cookie('__jua_', [uri]::EscapeDataString($ua), '/', $domain)))
+    return $session
+}
+
+function Invoke-PterodactylApi {
+    param($cfg, $session, $path, $method = 'GET', $body = $null)
+    $headers = @{
+        'Authorization' = "Bearer $($cfg.apiKey)"
+        'Accept'        = 'application/json'
+    }
+    $params = @{
+        Uri             = "$($cfg.panelBase)$path"
+        Method          = $method
+        Headers         = $headers
+        WebSession      = $session
+        UseBasicParsing = $true
+        TimeoutSec      = 30
+    }
+    if ($body) { $params['Body'] = $body; $params['ContentType'] = 'application/json' }
+    return Invoke-WebRequest @params
+}
+
+function Send-ServerPower {
+    param($cfg, $signal = 'restart')
+    $session = New-PterodactylSession $cfg
+    $path = "/api/client/servers/$($cfg.serverId)/power"
+    $body = (@{ signal = $signal } | ConvertTo-Json -Compress)
+    $resp = Invoke-PterodactylApi -cfg $cfg -session $session -path $path -method 'POST' -body $body
+    return $resp.StatusCode
+}
+
 $script:Config     = Load-ServerConfig
 $script:VersionDir = Load-VersionDir
 $script:Diff       = $null
 
 $form = New-Object System.Windows.Forms.Form
 $form.Text = 'GG Server Deploy'
-$form.Size = New-Object System.Drawing.Size(860, 640)
+$form.Size = New-Object System.Drawing.Size(860, 680)
 $form.StartPosition = 'CenterScreen'
 $form.FormBorderStyle = 'FixedSingle'
 $form.MaximizeBox = $false
@@ -182,12 +243,25 @@ $btnDeploy.Font = New-Object System.Drawing.Font('Segoe UI', 9, [System.Drawing.
 $btnDeploy.Enabled = $false
 $form.Controls.Add($btnDeploy)
 
+$chkRestart = New-Object System.Windows.Forms.CheckBox
+$chkRestart.Text = 'Restart server after deploy (via API)'
+$chkRestart.Location = New-Object System.Drawing.Point(12, 593)
+$chkRestart.Size = New-Object System.Drawing.Size(400, 24)
+$chkRestart.Checked = $true
+$form.Controls.Add($chkRestart)
+
 $btnClose = New-Object System.Windows.Forms.Button
 $btnClose.Text = 'Close'
 $btnClose.Location = New-Object System.Drawing.Point(717, 552)
 $btnClose.Size = New-Object System.Drawing.Size(120, 32)
 $btnClose.Add_Click({ $form.Close() })
 $form.Controls.Add($btnClose)
+
+$btnRestartOnly = New-Object System.Windows.Forms.Button
+$btnRestartOnly.Text = 'Restart only'
+$btnRestartOnly.Location = New-Object System.Drawing.Point(420, 590)
+$btnRestartOnly.Size = New-Object System.Drawing.Size(120, 28)
+$form.Controls.Add($btnRestartOnly)
 
 function Write-Log { param($m) $log.AppendText("$m`r`n"); [System.Windows.Forms.Application]::DoEvents() }
 
@@ -319,9 +393,23 @@ $btnDeploy.Add_Click({
             }
         }
 
-        Write-Log 'Done.'
+        Write-Log 'Deploy done.'
+
+        if ($chkRestart.Checked -and $script:Config.apiKey) {
+            Write-Log 'Restarting server via API (solving StormWall challenge, ~5s)...'
+            try {
+                $code = Send-ServerPower $script:Config 'restart'
+                if ($code -eq 204) { Write-Log 'Restart signal sent (204).' }
+                else { Write-Log "Unexpected status: $code" }
+            } catch {
+                Write-Log "Restart failed: $($_.Exception.Message)"
+            }
+        } elseif ($chkRestart.Checked) {
+            Write-Log 'Skipping restart: apiKey not set in gg-server.cfg.'
+        }
+
         [System.Windows.Forms.MessageBox]::Show(
-            'Server deploy finished. Restart the server via panel to load mods.',
+            'Done.',
             'Deployed',
             [System.Windows.Forms.MessageBoxButtons]::OK,
             [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
@@ -332,6 +420,29 @@ $btnDeploy.Add_Click({
         $btnRefresh.Enabled = $true
         $btnClose.Enabled = $true
         $btnEdit.Enabled = $true
+    }
+})
+
+$btnRestartOnly.Add_Click({
+    if (-not $script:Config.apiKey) {
+        Write-Log 'ERROR: apiKey not set in gg-server.cfg.'
+        return
+    }
+    $confirm = [System.Windows.Forms.MessageBox]::Show(
+        'Send restart signal to the server now?',
+        'Restart',
+        [System.Windows.Forms.MessageBoxButtons]::YesNo,
+        [System.Windows.Forms.MessageBoxIcon]::Question)
+    if ($confirm -ne [System.Windows.Forms.DialogResult]::Yes) { return }
+    $btnRestartOnly.Enabled = $false
+    try {
+        Write-Log 'Solving StormWall challenge...'
+        $code = Send-ServerPower $script:Config 'restart'
+        if ($code -eq 204) { Write-Log 'Restart sent.' } else { Write-Log "Status: $code" }
+    } catch {
+        Write-Log "ERROR: $($_.Exception.Message)"
+    } finally {
+        $btnRestartOnly.Enabled = $true
     }
 })
 
