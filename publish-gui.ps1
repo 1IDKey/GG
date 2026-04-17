@@ -21,7 +21,7 @@ $GhPath = Get-GhPath
 
 $form = New-Object System.Windows.Forms.Form
 $form.Text = 'GG Modpack Publisher'
-$form.Size = New-Object System.Drawing.Size(820, 620)
+$form.Size = New-Object System.Drawing.Size(1112, 620)
 $form.StartPosition = 'CenterScreen'
 $form.FormBorderStyle = 'FixedSingle'
 $form.MaximizeBox = $false
@@ -30,13 +30,13 @@ $lblHeader = New-Object System.Windows.Forms.Label
 $lblHeader.Text = 'GG Modpack Publisher'
 $lblHeader.Font = New-Object System.Drawing.Font('Segoe UI', 14, [System.Drawing.FontStyle]::Bold)
 $lblHeader.Location = New-Object System.Drawing.Point(12, 12)
-$lblHeader.Size = New-Object System.Drawing.Size(800, 28)
+$lblHeader.Size = New-Object System.Drawing.Size(1080, 28)
 $form.Controls.Add($lblHeader)
 
 $lblMeta = New-Object System.Windows.Forms.Label
 $lblMeta.Text = "Repo: $RepoSlug   Tag: $ReleaseTag   Mods: $ModsDir"
 $lblMeta.Location = New-Object System.Drawing.Point(12, 44)
-$lblMeta.Size = New-Object System.Drawing.Size(800, 18)
+$lblMeta.Size = New-Object System.Drawing.Size(1080, 18)
 $lblMeta.ForeColor = [System.Drawing.Color]::DimGray
 $form.Controls.Add($lblMeta)
 
@@ -59,9 +59,10 @@ function New-ListGroup {
     return @{ Label = $lbl; List = $lst }
 }
 
-$added   = New-ListGroup 'Added (upload)'     12  ([System.Drawing.Color]::ForestGreen)
-$removed = New-ListGroup 'Removed (delete)'   284 ([System.Drawing.Color]::Firebrick)
-$changed = New-ListGroup 'Changed (re-upload)' 556 ([System.Drawing.Color]::DarkGoldenrod)
+$all     = New-ListGroup 'All mods (local)'   12   ([System.Drawing.Color]::SteelBlue)
+$added   = New-ListGroup 'Added (upload)'     284  ([System.Drawing.Color]::ForestGreen)
+$removed = New-ListGroup 'Removed (delete)'   556  ([System.Drawing.Color]::Firebrick)
+$changed = New-ListGroup 'Changed (re-upload)' 828 ([System.Drawing.Color]::DarkGoldenrod)
 
 $lblNotes = New-Object System.Windows.Forms.Label
 $lblNotes.Text = 'Commit message:'
@@ -71,7 +72,7 @@ $form.Controls.Add($lblNotes)
 
 $txtNotes = New-Object System.Windows.Forms.TextBox
 $txtNotes.Location = New-Object System.Drawing.Point(12, 466)
-$txtNotes.Size = New-Object System.Drawing.Size(540, 24)
+$txtNotes.Size = New-Object System.Drawing.Size(812, 24)
 $txtNotes.Text = 'Update modpack'
 $form.Controls.Add($txtNotes)
 
@@ -80,7 +81,7 @@ $log.Multiline = $true
 $log.ScrollBars = 'Vertical'
 $log.ReadOnly = $true
 $log.Location = New-Object System.Drawing.Point(12, 500)
-$log.Size = New-Object System.Drawing.Size(540, 78)
+$log.Size = New-Object System.Drawing.Size(812, 78)
 $log.Font = New-Object System.Drawing.Font('Consolas', 9)
 $log.BackColor = [System.Drawing.Color]::FromArgb(30, 30, 30)
 $log.ForeColor = [System.Drawing.Color]::Gainsboro
@@ -88,13 +89,13 @@ $form.Controls.Add($log)
 
 $btnRefresh = New-Object System.Windows.Forms.Button
 $btnRefresh.Text = 'Refresh diff'
-$btnRefresh.Location = New-Object System.Drawing.Point(564, 466)
+$btnRefresh.Location = New-Object System.Drawing.Point(836, 466)
 $btnRefresh.Size = New-Object System.Drawing.Size(120, 32)
 $form.Controls.Add($btnRefresh)
 
 $btnPublish = New-Object System.Windows.Forms.Button
 $btnPublish.Text = 'Publish'
-$btnPublish.Location = New-Object System.Drawing.Point(692, 466)
+$btnPublish.Location = New-Object System.Drawing.Point(964, 466)
 $btnPublish.Size = New-Object System.Drawing.Size(120, 32)
 $btnPublish.Font = New-Object System.Drawing.Font('Segoe UI', 9, [System.Drawing.FontStyle]::Bold)
 $btnPublish.Enabled = $false
@@ -102,7 +103,7 @@ $form.Controls.Add($btnPublish)
 
 $btnClose = New-Object System.Windows.Forms.Button
 $btnClose.Text = 'Close'
-$btnClose.Location = New-Object System.Drawing.Point(692, 546)
+$btnClose.Location = New-Object System.Drawing.Point(964, 546)
 $btnClose.Size = New-Object System.Drawing.Size(120, 32)
 $btnClose.Add_Click({ $form.Close() })
 $form.Controls.Add($btnClose)
@@ -117,8 +118,16 @@ function Invoke-Gh {
     return @{ Ok = ($LASTEXITCODE -eq 0); Output = ($out -join "`n") }
 }
 
+function Format-Size {
+    param([long]$bytes)
+    if ($bytes -ge 1MB) { return ('{0:N1} MB' -f ($bytes / 1MB)) }
+    if ($bytes -ge 1KB) { return ('{0:N1} KB' -f ($bytes / 1KB)) }
+    return "$bytes B"
+}
+
 $btnRefresh.Add_Click({
     $log.Clear()
+    $all.List.Items.Clear()
     $added.List.Items.Clear()
     $removed.List.Items.Clear()
     $changed.List.Items.Clear()
@@ -134,8 +143,13 @@ $btnRefresh.Add_Click({
     }
 
     Write-Log 'Loading local mods...'
-    $local = Get-ChildItem -Path $ModsDir -Filter *.jar -File
+    $local = Get-ChildItem -Path $ModsDir -Filter *.jar -File | Sort-Object Name
     Write-Log "Local: $($local.Count) jars"
+
+    foreach ($f in $local) {
+        [void]$all.List.Items.Add(("{0}  [{1}]" -f $f.Name, (Format-Size $f.Length)))
+    }
+    $all.Label.Text = "All mods (local)   $($local.Count)"
 
     Write-Log 'Fetching published manifest...'
     try {
