@@ -2,11 +2,34 @@ Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
 
+$ScriptVersion     = '1.1.0'
 $ManifestUrl       = 'https://raw.githubusercontent.com/1IDKey/GG/main/manifest.json'
+$ScriptRawBase     = 'https://raw.githubusercontent.com/1IDKey/GG/main'
 $DefaultVersionDir = Join-Path $env:APPDATA '.minecraft\versions\GG'
 $ConfigFile        = Join-Path $PSScriptRoot 'gg-updater.cfg'
 $IgnoreFile        = Join-Path $PSScriptRoot 'ignore.txt'
 $BackupKeep        = 5
+
+function Test-MinecraftRunning {
+    try {
+        $procs = Get-CimInstance Win32_Process -Filter "Name='javaw.exe' OR Name='java.exe'" -ErrorAction SilentlyContinue
+        foreach ($p in $procs) {
+            if ($p.CommandLine -and ($p.CommandLine -match 'minecraft|forge|fabric|fml|modlauncher|bootstraplauncher')) {
+                return $true
+            }
+        }
+    } catch {}
+    return $false
+}
+
+function Get-RemoteScriptVersion {
+    try {
+        $ProgressPreference = 'SilentlyContinue'
+        $txt = (Invoke-WebRequest -Uri "$ScriptRawBase/update-gui.ps1" -UseBasicParsing -TimeoutSec 8).Content
+        if ($txt -match "\`$ScriptVersion\s*=\s*'([^']+)'") { return $matches[1] }
+    } catch {}
+    return $null
+}
 
 function Load-Config {
     if (Test-Path $ConfigFile) {
@@ -82,8 +105,17 @@ $lblHeader = New-Object System.Windows.Forms.Label
 $lblHeader.Text = 'GG Modpack Updater'
 $lblHeader.Font = New-Object System.Drawing.Font('Segoe UI', 14, [System.Drawing.FontStyle]::Bold)
 $lblHeader.Location = New-Object System.Drawing.Point(12, 12)
-$lblHeader.Size = New-Object System.Drawing.Size(600, 28)
+$lblHeader.Size = New-Object System.Drawing.Size(380, 28)
 $form.Controls.Add($lblHeader)
+
+$lnkVersion = New-Object System.Windows.Forms.LinkLabel
+$lnkVersion.Text = "v$ScriptVersion"
+$lnkVersion.Location = New-Object System.Drawing.Point(400, 18)
+$lnkVersion.Size = New-Object System.Drawing.Size(212, 20)
+$lnkVersion.TextAlign = 'MiddleRight'
+$lnkVersion.LinkBehavior = 'HoverUnderline'
+$lnkVersion.Enabled = $false
+$form.Controls.Add($lnkVersion)
 
 $lblPath = New-Object System.Windows.Forms.Label
 $lblPath.Text = 'Version folder:'
@@ -147,6 +179,12 @@ $log.BackColor = [System.Drawing.Color]::FromArgb(30, 30, 30)
 $log.ForeColor = [System.Drawing.Color]::Gainsboro
 $form.Controls.Add($log)
 
+$btnRestore = New-Object System.Windows.Forms.Button
+$btnRestore.Text = 'Restore backup...'
+$btnRestore.Location = New-Object System.Drawing.Point(12, 440)
+$btnRestore.Size = New-Object System.Drawing.Size(140, 32)
+$form.Controls.Add($btnRestore)
+
 $btnUpdate = New-Object System.Windows.Forms.Button
 $btnUpdate.Text = 'Update'
 $btnUpdate.Location = New-Object System.Drawing.Point(432, 440)
@@ -191,6 +229,15 @@ $btnUpdate.Add_Click({
         $modsDir = Resolve-ModsDir $script:VersionDir
         if (-not $modsDir) {
             Set-Status "Error: no 'mods' subfolder inside version folder."
+            return
+        }
+        if (Test-MinecraftRunning) {
+            Set-Status 'Error: Minecraft is running. Close the game first.'
+            [System.Windows.Forms.MessageBox]::Show(
+                'Minecraft appears to be running. Close the game and try again.',
+                'Game running',
+                [System.Windows.Forms.MessageBoxButtons]::OK,
+                [System.Windows.Forms.MessageBoxIcon]::Warning) | Out-Null
             return
         }
 
@@ -345,6 +392,88 @@ $btnUpdate.Add_Click({
         $btnUpdate.Enabled = $true
         $btnClose.Enabled = $true
         $btnBrowse.Enabled = $true
+    }
+})
+
+$btnRestore.Add_Click({
+    if (-not (Test-Path $script:VersionDir)) {
+        [System.Windows.Forms.MessageBox]::Show('Pick a version folder first.', 'Restore', 'OK', 'Information') | Out-Null
+        return
+    }
+    $backupDir = Join-Path $script:VersionDir 'backups'
+    if (-not (Test-Path $backupDir)) {
+        [System.Windows.Forms.MessageBox]::Show('No backups yet.', 'Restore', 'OK', 'Information') | Out-Null
+        return
+    }
+    $dlg = New-Object System.Windows.Forms.OpenFileDialog
+    $dlg.Title = 'Pick a backup to restore'
+    $dlg.InitialDirectory = $backupDir
+    $dlg.Filter = 'Backup archives (*.zip)|*.zip'
+    if ($dlg.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { return }
+
+    if (Test-MinecraftRunning) {
+        [System.Windows.Forms.MessageBox]::Show('Close Minecraft first.', 'Game running', 'OK', 'Warning') | Out-Null
+        return
+    }
+
+    $zipPath = $dlg.FileName
+    $base = [System.IO.Path]::GetFileNameWithoutExtension($zipPath)
+    $label = ($base -split '-')[0]
+    $targetFolder = Join-Path $script:VersionDir $label
+
+    $answer = [System.Windows.Forms.MessageBox]::Show(
+        "Restore '$label' from:`n$zipPath`n`nTarget: $targetFolder`n`nThis will DELETE current '$label' folder contents.",
+        'Confirm restore',
+        [System.Windows.Forms.MessageBoxButtons]::YesNo,
+        [System.Windows.Forms.MessageBoxIcon]::Warning)
+    if ($answer -ne [System.Windows.Forms.DialogResult]::Yes) { return }
+
+    try {
+        $log.Clear()
+        Write-Log "Restoring $label from $zipPath..."
+        if (Test-Path $targetFolder) { Remove-Item -Path $targetFolder -Recurse -Force }
+        New-Item -ItemType Directory -Path $targetFolder | Out-Null
+        Expand-Archive -Path $zipPath -DestinationPath $targetFolder -Force
+        # Invalidate sync state for that folder so next Update re-checks
+        $state = Load-SyncState $script:VersionDir
+        if ($state.PSObject.Properties[$label]) {
+            $state.PSObject.Properties.Remove($label) | Out-Null
+            Save-SyncState $script:VersionDir $state
+        }
+        Set-Status "Restored: $label"
+        Write-Log 'Done.'
+    } catch {
+        Set-Status "Error: $($_.Exception.Message)"
+        Write-Log $_.Exception.Message
+    }
+})
+
+$lnkVersion.Add_LinkClicked({
+    $answer = [System.Windows.Forms.MessageBox]::Show(
+        "Download latest update-gui.ps1 + update-gui.bat from GitHub and overwrite local copies?`n`nThe window will close after update -- relaunch manually.",
+        'Self-update',
+        [System.Windows.Forms.MessageBoxButtons]::YesNo,
+        [System.Windows.Forms.MessageBoxIcon]::Question)
+    if ($answer -ne [System.Windows.Forms.DialogResult]::Yes) { return }
+    try {
+        $ProgressPreference = 'SilentlyContinue'
+        $ps1 = Join-Path $PSScriptRoot 'update-gui.ps1'
+        $bat = Join-Path $PSScriptRoot 'update-gui.bat'
+        Invoke-WebRequest -Uri "$ScriptRawBase/update-gui.ps1" -OutFile $ps1 -UseBasicParsing
+        Invoke-WebRequest -Uri "$ScriptRawBase/update-gui.bat" -OutFile $bat -UseBasicParsing
+        [System.Windows.Forms.MessageBox]::Show('Scripts updated. Relaunch update-gui.bat.', 'Done', 'OK', 'Information') | Out-Null
+        $form.Close()
+    } catch {
+        [System.Windows.Forms.MessageBox]::Show("Update failed: $($_.Exception.Message)", 'Error', 'OK', 'Error') | Out-Null
+    }
+})
+
+$form.Add_Shown({
+    $remote = Get-RemoteScriptVersion
+    if ($remote -and $remote -ne $ScriptVersion) {
+        $lnkVersion.Text = "v$ScriptVersion -> v$remote available (click to update)"
+        $lnkVersion.LinkColor = [System.Drawing.Color]::ForestGreen
+        $lnkVersion.Enabled = $true
     }
 })
 

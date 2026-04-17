@@ -39,6 +39,18 @@ function Get-GhPath {
     return $null
 }
 
+function Test-MinecraftRunning {
+    try {
+        $procs = Get-CimInstance Win32_Process -Filter "Name='javaw.exe' OR Name='java.exe'" -ErrorAction SilentlyContinue
+        foreach ($p in $procs) {
+            if ($p.CommandLine -and ($p.CommandLine -match 'minecraft|forge|fabric|fml|modlauncher|bootstraplauncher')) {
+                return $true
+            }
+        }
+    } catch {}
+    return $false
+}
+
 function Format-Size {
     param([long]$bytes)
     if ($bytes -ge 1MB) { return ('{0:N1} MB' -f ($bytes / 1MB)) }
@@ -296,6 +308,15 @@ $btnPublish.Add_Click({
         [System.Windows.Forms.MessageBoxIcon]::Question)
     if ($confirm -ne [System.Windows.Forms.DialogResult]::Yes) { return }
 
+    if (Test-MinecraftRunning) {
+        [System.Windows.Forms.MessageBox]::Show(
+            'Minecraft is running. Close the game before publishing (to avoid zipping locked files).',
+            'Game running',
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Warning) | Out-Null
+        return
+    }
+
     $btnPublish.Enabled = $false
     $btnRefresh.Enabled = $false
     $btnClose.Enabled = $false
@@ -328,8 +349,13 @@ $btnPublish.Add_Click({
                 Write-Log "? skip folder (not found): $fname"
                 continue
             }
+            $anyFiles = @(Get-ChildItem -Path $fpath -Recurse -File -ErrorAction SilentlyContinue)
+            if ($anyFiles.Count -eq 0) {
+                Write-Log "  skip (empty): $fname"
+                continue
+            }
             $tempZip = Join-Path $env:TEMP ("gg-publish-" + $fname + ".zip")
-            Write-Log "* zipping folder: $fname"
+            Write-Log "* zipping folder: $fname ($($anyFiles.Count) files)"
             try {
                 New-FolderZip -folderPath $fpath -destZip $tempZip
             } catch {
