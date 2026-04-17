@@ -1,0 +1,15 @@
+{
+  "version": "1.0.0",
+  "mods": [
+    {
+      "filename": "Quark-4.0-462.jar",
+      "url": "https://github.com/1IDKey/GG/releases/download/v1.0.0/Quark-4.0-462.jar",
+      "size": 14935230
+    },
+    {
+      "filename": "jei-1.20.1-forge-15.20.0.129.jar",
+      "url": "https://github.com/1IDKey/GG/releases/download/v1.0.0/jei-1.20.1-forge-15.20.0.129.jar",
+      "size": 1409642
+    }
+  ]
+}
