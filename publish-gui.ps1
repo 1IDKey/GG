@@ -4,10 +4,31 @@ Add-Type -AssemblyName System.Drawing
 
 $RepoSlug    = '1IDKey/GG'
 $ReleaseTag  = 'v1.0.0'
-$ModsDir     = Join-Path $env:APPDATA '.minecraft\versions\GG\mods'
 $ManifestUrl = "https://raw.githubusercontent.com/$RepoSlug/main/manifest.json"
 $LocalRepo   = $PSScriptRoot
 $ManifestLocal = Join-Path $LocalRepo 'manifest.json'
+$ConfigFile    = Join-Path $PSScriptRoot 'gg-publisher.cfg'
+$DefaultVersionDir = Join-Path $env:APPDATA '.minecraft\versions\GG'
+
+function Load-Config {
+    if (Test-Path $ConfigFile) {
+        $p = (Get-Content $ConfigFile -Raw -ErrorAction SilentlyContinue).Trim()
+        if ($p -and (Test-Path $p)) { return $p }
+    }
+    if (Test-Path $DefaultVersionDir) { return $DefaultVersionDir }
+    return ''
+}
+
+function Save-Config { param($p) Set-Content -Path $ConfigFile -Value $p -Encoding ASCII }
+
+function Resolve-ModsDir {
+    param($versionDir)
+    if (-not $versionDir) { return $null }
+    $sub = Join-Path $versionDir 'mods'
+    if (Test-Path $sub) { return $sub }
+    if (Test-Path $versionDir) { return $versionDir }
+    return $null
+}
 
 function Get-GhPath {
     $cmd = Get-Command gh -ErrorAction SilentlyContinue
@@ -18,10 +39,11 @@ function Get-GhPath {
 }
 
 $GhPath = Get-GhPath
+$script:VersionDir = Load-Config
 
 $form = New-Object System.Windows.Forms.Form
 $form.Text = 'GG Modpack Publisher'
-$form.Size = New-Object System.Drawing.Size(1112, 620)
+$form.Size = New-Object System.Drawing.Size(1112, 680)
 $form.StartPosition = 'CenterScreen'
 $form.FormBorderStyle = 'FixedSingle'
 $form.MaximizeBox = $false
@@ -33,9 +55,28 @@ $lblHeader.Location = New-Object System.Drawing.Point(12, 12)
 $lblHeader.Size = New-Object System.Drawing.Size(1080, 28)
 $form.Controls.Add($lblHeader)
 
+$lblPath = New-Object System.Windows.Forms.Label
+$lblPath.Text = 'Version folder:'
+$lblPath.Location = New-Object System.Drawing.Point(12, 46)
+$lblPath.Size = New-Object System.Drawing.Size(100, 18)
+$form.Controls.Add($lblPath)
+
+$txtPath = New-Object System.Windows.Forms.TextBox
+$txtPath.Location = New-Object System.Drawing.Point(12, 66)
+$txtPath.Size = New-Object System.Drawing.Size(980, 24)
+$txtPath.ReadOnly = $true
+$txtPath.Text = $script:VersionDir
+$form.Controls.Add($txtPath)
+
+$btnBrowse = New-Object System.Windows.Forms.Button
+$btnBrowse.Text = 'Browse...'
+$btnBrowse.Location = New-Object System.Drawing.Point(997, 65)
+$btnBrowse.Size = New-Object System.Drawing.Size(95, 26)
+$form.Controls.Add($btnBrowse)
+
 $lblMeta = New-Object System.Windows.Forms.Label
-$lblMeta.Text = "Repo: $RepoSlug   Tag: $ReleaseTag   Mods: $ModsDir"
-$lblMeta.Location = New-Object System.Drawing.Point(12, 44)
+$lblMeta.Text = "Repo: $RepoSlug   Tag: $ReleaseTag"
+$lblMeta.Location = New-Object System.Drawing.Point(12, 98)
 $lblMeta.Size = New-Object System.Drawing.Size(1080, 18)
 $lblMeta.ForeColor = [System.Drawing.Color]::DimGray
 $form.Controls.Add($lblMeta)
@@ -44,14 +85,14 @@ function New-ListGroup {
     param($text, $x, $color)
     $lbl = New-Object System.Windows.Forms.Label
     $lbl.Text = $text
-    $lbl.Location = New-Object System.Drawing.Point($x, 72)
+    $lbl.Location = New-Object System.Drawing.Point($x, 126)
     $lbl.Size = New-Object System.Drawing.Size(260, 20)
     $lbl.ForeColor = $color
     $lbl.Font = New-Object System.Drawing.Font('Segoe UI', 9, [System.Drawing.FontStyle]::Bold)
     $form.Controls.Add($lbl)
 
     $lst = New-Object System.Windows.Forms.ListBox
-    $lst.Location = New-Object System.Drawing.Point($x, 94)
+    $lst.Location = New-Object System.Drawing.Point($x, 148)
     $lst.Size = New-Object System.Drawing.Size(260, 340)
     $lst.Font = New-Object System.Drawing.Font('Consolas', 9)
     $form.Controls.Add($lst)
@@ -66,12 +107,12 @@ $changed = New-ListGroup 'Changed (re-upload)' 828 ([System.Drawing.Color]::Dark
 
 $lblNotes = New-Object System.Windows.Forms.Label
 $lblNotes.Text = 'Commit message:'
-$lblNotes.Location = New-Object System.Drawing.Point(12, 446)
+$lblNotes.Location = New-Object System.Drawing.Point(12, 500)
 $lblNotes.Size = New-Object System.Drawing.Size(200, 18)
 $form.Controls.Add($lblNotes)
 
 $txtNotes = New-Object System.Windows.Forms.TextBox
-$txtNotes.Location = New-Object System.Drawing.Point(12, 466)
+$txtNotes.Location = New-Object System.Drawing.Point(12, 520)
 $txtNotes.Size = New-Object System.Drawing.Size(812, 24)
 $txtNotes.Text = 'Update modpack'
 $form.Controls.Add($txtNotes)
@@ -80,7 +121,7 @@ $log = New-Object System.Windows.Forms.TextBox
 $log.Multiline = $true
 $log.ScrollBars = 'Vertical'
 $log.ReadOnly = $true
-$log.Location = New-Object System.Drawing.Point(12, 500)
+$log.Location = New-Object System.Drawing.Point(12, 554)
 $log.Size = New-Object System.Drawing.Size(812, 78)
 $log.Font = New-Object System.Drawing.Font('Consolas', 9)
 $log.BackColor = [System.Drawing.Color]::FromArgb(30, 30, 30)
@@ -89,13 +130,13 @@ $form.Controls.Add($log)
 
 $btnRefresh = New-Object System.Windows.Forms.Button
 $btnRefresh.Text = 'Refresh diff'
-$btnRefresh.Location = New-Object System.Drawing.Point(836, 466)
+$btnRefresh.Location = New-Object System.Drawing.Point(836, 520)
 $btnRefresh.Size = New-Object System.Drawing.Size(120, 32)
 $form.Controls.Add($btnRefresh)
 
 $btnPublish = New-Object System.Windows.Forms.Button
 $btnPublish.Text = 'Publish'
-$btnPublish.Location = New-Object System.Drawing.Point(964, 466)
+$btnPublish.Location = New-Object System.Drawing.Point(964, 520)
 $btnPublish.Size = New-Object System.Drawing.Size(120, 32)
 $btnPublish.Font = New-Object System.Drawing.Font('Segoe UI', 9, [System.Drawing.FontStyle]::Bold)
 $btnPublish.Enabled = $false
@@ -103,7 +144,7 @@ $form.Controls.Add($btnPublish)
 
 $btnClose = New-Object System.Windows.Forms.Button
 $btnClose.Text = 'Close'
-$btnClose.Location = New-Object System.Drawing.Point(964, 546)
+$btnClose.Location = New-Object System.Drawing.Point(964, 600)
 $btnClose.Size = New-Object System.Drawing.Size(120, 32)
 $btnClose.Add_Click({ $form.Close() })
 $form.Controls.Add($btnClose)
@@ -125,6 +166,18 @@ function Format-Size {
     return "$bytes B"
 }
 
+$btnBrowse.Add_Click({
+    $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
+    $dlg.Description = 'Select your Minecraft version folder (usually .minecraft\versions\GG)'
+    if ($script:VersionDir) { $dlg.SelectedPath = $script:VersionDir }
+    if ($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+        $script:VersionDir = $dlg.SelectedPath
+        $txtPath.Text = $script:VersionDir
+        Save-Config $script:VersionDir
+        $btnRefresh.PerformClick()
+    }
+})
+
 $btnRefresh.Add_Click({
     $log.Clear()
     $all.List.Items.Clear()
@@ -137,13 +190,15 @@ $btnRefresh.Add_Click({
         Write-Log 'ERROR: gh CLI not found. Install GitHub CLI first.'
         return
     }
-    if (-not (Test-Path $ModsDir)) {
-        Write-Log "ERROR: mods folder not found: $ModsDir"
+    $modsDir = Resolve-ModsDir $script:VersionDir
+    if (-not $modsDir) {
+        Write-Log 'ERROR: version folder not set. Click Browse.'
         return
     }
 
+    Write-Log "Mods folder: $modsDir"
     Write-Log 'Loading local mods...'
-    $local = Get-ChildItem -Path $ModsDir -Filter *.jar -File | Sort-Object Name
+    $local = Get-ChildItem -Path $modsDir -Filter *.jar -File | Sort-Object Name
     Write-Log "Local: $($local.Count) jars"
 
     foreach ($f in $local) {
@@ -195,6 +250,7 @@ $btnRefresh.Add_Click({
         Removed  = $removedList
         Changed  = $changedList
         LocalMap = $localMap
+        ModsDir  = $modsDir
     }
 
     $hasWork = ($addedList.Count + $removedList.Count + $changedList.Count) -gt 0
@@ -215,6 +271,7 @@ $btnPublish.Add_Click({
     $btnPublish.Enabled = $false
     $btnRefresh.Enabled = $false
     $btnClose.Enabled = $false
+    $btnBrowse.Enabled = $false
 
     try {
         foreach ($name in $script:diff.Removed) {
@@ -235,7 +292,7 @@ $btnPublish.Add_Click({
 
         Write-Log 'Regenerating manifest.json...'
         $genScript = Join-Path $PSScriptRoot 'build-manifest.ps1'
-        & powershell -NoProfile -ExecutionPolicy Bypass -File $genScript -ModsDir $ModsDir -ReleaseTag $ReleaseTag -RepoSlug $RepoSlug -OutFile $ManifestLocal | Out-Null
+        & powershell -NoProfile -ExecutionPolicy Bypass -File $genScript -ModsDir $script:diff.ModsDir -ReleaseTag $ReleaseTag -RepoSlug $RepoSlug -OutFile $ManifestLocal | Out-Null
 
         Write-Log 'git add/commit/push...'
         Push-Location $LocalRepo
@@ -260,6 +317,7 @@ $btnPublish.Add_Click({
     } finally {
         $btnRefresh.Enabled = $true
         $btnClose.Enabled = $true
+        $btnBrowse.Enabled = $true
     }
 })
 
