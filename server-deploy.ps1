@@ -90,41 +90,73 @@ function Get-JHash { param([int]$b)
 function New-PterodactylSession {
     param($cfg)
     $ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-    $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
-    $session.UserAgent = $ua
-    # Probe to obtain __js_p_ cookie from StormWall
+    $uri = [uri]"$($cfg.panelBase)/api/client"
+    # Probe to obtain __js_p_ cookie via raw HttpWebRequest (more reliable than Invoke-WebRequest)
+    $req = [System.Net.HttpWebRequest]::CreateHttp($uri)
+    $req.UserAgent = $ua
+    $req.Method = 'GET'
+    $req.AllowAutoRedirect = $false
+    $req.Timeout = 15000
+    $req.CookieContainer = New-Object System.Net.CookieContainer
     try {
-        $null = Invoke-WebRequest -Uri "$($cfg.panelBase)/api/client" -WebSession $session -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop
-    } catch {}
-    $jsCookie = $null
-    foreach ($c in $session.Cookies.GetCookies($cfg.panelBase)) {
-        if ($c.Name -eq '__js_p_') { $jsCookie = $c }
+        $resp = $req.GetResponse()
+        $resp.Close()
+    } catch [System.Net.WebException] {
+        if ($_.Exception.Response) { $_.Exception.Response.Close() }
     }
-    if (-not $jsCookie) { throw 'StormWall __js_p_ cookie not received' }
+    $cookies = $req.CookieContainer.GetCookies($uri)
+    $jsCookie = $null
+    foreach ($c in $cookies) { if ($c.Name -eq '__js_p_') { $jsCookie = $c; break } }
+    if (-not $jsCookie) { throw "StormWall __js_p_ cookie not received. Panel blocked or auth issue." }
     $code = [int](($jsCookie.Value -split ',')[0])
     $jhash = Get-JHash $code
-    $domain = ([uri]$cfg.panelBase).Host
-    $session.Cookies.Add((New-Object System.Net.Cookie('__jhash_', "$jhash", '/', $domain)))
-    $session.Cookies.Add((New-Object System.Net.Cookie('__jua_', [uri]::EscapeDataString($ua), '/', $domain)))
-    return $session
+    $hostName = $uri.Host
+    $container = New-Object System.Net.CookieContainer
+    $container.Add($uri, (New-Object System.Net.Cookie('__js_p_', $jsCookie.Value, '/', $hostName)))
+    $container.Add($uri, (New-Object System.Net.Cookie('__jhash_', "$jhash", '/', $hostName)))
+    $container.Add($uri, (New-Object System.Net.Cookie('__jua_', [uri]::EscapeDataString($ua), '/', $hostName)))
+    return @{ Cookies = $container; UA = $ua; Code = $code; JHash = $jhash }
 }
 
 function Invoke-PterodactylApi {
     param($cfg, $session, $path, $method = 'GET', $body = $null)
-    $headers = @{
-        'Authorization' = "Bearer $($cfg.apiKey)"
-        'Accept'        = 'application/json'
+    $uri = [uri]"$($cfg.panelBase)$path"
+    $req = [System.Net.HttpWebRequest]::CreateHttp($uri)
+    $req.Method = $method
+    $req.UserAgent = $session.UA
+    $req.Accept = 'application/json'
+    $req.Headers.Add('Authorization', "Bearer $($cfg.apiKey)")
+    $req.CookieContainer = $session.Cookies
+    $req.AllowAutoRedirect = $false
+    $req.Timeout = 30000
+    if ($body) {
+        $req.ContentType = 'application/json'
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($body)
+        $req.ContentLength = $bytes.Length
+        $stream = $req.GetRequestStream()
+        $stream.Write($bytes, 0, $bytes.Length)
+        $stream.Close()
     }
-    $params = @{
-        Uri             = "$($cfg.panelBase)$path"
-        Method          = $method
-        Headers         = $headers
-        WebSession      = $session
-        UseBasicParsing = $true
-        TimeoutSec      = 30
+    try {
+        $resp = $req.GetResponse()
+        $status = [int]$resp.StatusCode
+        $reader = New-Object System.IO.StreamReader($resp.GetResponseStream())
+        $content = $reader.ReadToEnd()
+        $reader.Close()
+        $resp.Close()
+        return @{ StatusCode = $status; Content = $content }
+    } catch [System.Net.WebException] {
+        $eresp = $_.Exception.Response
+        if ($eresp) {
+            $status = [int]$eresp.StatusCode
+            $reader = New-Object System.IO.StreamReader($eresp.GetResponseStream())
+            $content = $reader.ReadToEnd()
+            $reader.Close()
+            $eresp.Close()
+            return @{ StatusCode = $status; Content = $content }
+        }
+        throw
     }
-    if ($body) { $params['Body'] = $body; $params['ContentType'] = 'application/json' }
-    return Invoke-WebRequest @params
 }
 
 function Send-ServerPower {

@@ -1,0 +1,10 @@
+# GG Modpack Updater - Ignore list
+# Rename this file to "ignore.txt" to activate.
+# One pattern per line. Wildcards: *  ?
+# Patterns match mod filenames (not full paths).
+# Lines starting with # are comments.
+#
+# Examples:
+# my-personal-map-mod.jar
+# xaeros*.jar
+# *shader*.jar
