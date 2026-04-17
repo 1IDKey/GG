@@ -2,13 +2,14 @@ Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
 
-$RepoSlug    = '1IDKey/GG'
-$ReleaseTag  = 'v1.0.0'
-$ManifestUrl = "https://raw.githubusercontent.com/$RepoSlug/main/manifest.json"
-$LocalRepo   = $PSScriptRoot
+$RepoSlug      = '1IDKey/GG'
+$ReleaseTag    = 'v1.0.0'
+$ManifestUrl   = "https://raw.githubusercontent.com/$RepoSlug/main/manifest.json"
+$LocalRepo     = $PSScriptRoot
 $ManifestLocal = Join-Path $LocalRepo 'manifest.json'
 $ConfigFile    = Join-Path $PSScriptRoot 'gg-publisher.cfg'
 $DefaultVersionDir = Join-Path $env:APPDATA '.minecraft\versions\GG'
+$SyncFolders   = @('config', 'kubejs')  # Edit to add/remove synced folders
 
 function Load-Config {
     if (Test-Path $ConfigFile) {
@@ -38,12 +39,19 @@ function Get-GhPath {
     return $null
 }
 
+function Format-Size {
+    param([long]$bytes)
+    if ($bytes -ge 1MB) { return ('{0:N1} MB' -f ($bytes / 1MB)) }
+    if ($bytes -ge 1KB) { return ('{0:N1} KB' -f ($bytes / 1KB)) }
+    return "$bytes B"
+}
+
 $GhPath = Get-GhPath
 $script:VersionDir = Load-Config
 
 $form = New-Object System.Windows.Forms.Form
 $form.Text = 'GG Modpack Publisher'
-$form.Size = New-Object System.Drawing.Size(1112, 680)
+$form.Size = New-Object System.Drawing.Size(1112, 720)
 $form.StartPosition = 'CenterScreen'
 $form.FormBorderStyle = 'FixedSingle'
 $form.MaximizeBox = $false
@@ -75,7 +83,7 @@ $btnBrowse.Size = New-Object System.Drawing.Size(95, 26)
 $form.Controls.Add($btnBrowse)
 
 $lblMeta = New-Object System.Windows.Forms.Label
-$lblMeta.Text = "Repo: $RepoSlug   Tag: $ReleaseTag"
+$lblMeta.Text = "Repo: $RepoSlug   Tag: $ReleaseTag   SyncFolders: $($SyncFolders -join ', ')"
 $lblMeta.Location = New-Object System.Drawing.Point(12, 98)
 $lblMeta.Size = New-Object System.Drawing.Size(1080, 18)
 $lblMeta.ForeColor = [System.Drawing.Color]::DimGray
@@ -93,7 +101,7 @@ function New-ListGroup {
 
     $lst = New-Object System.Windows.Forms.ListBox
     $lst.Location = New-Object System.Drawing.Point($x, 148)
-    $lst.Size = New-Object System.Drawing.Size(260, 340)
+    $lst.Size = New-Object System.Drawing.Size(260, 300)
     $lst.Font = New-Object System.Drawing.Font('Consolas', 9)
     $form.Controls.Add($lst)
 
@@ -105,14 +113,27 @@ $added   = New-ListGroup 'Added (upload)'     284  ([System.Drawing.Color]::Fore
 $removed = New-ListGroup 'Removed (delete)'   556  ([System.Drawing.Color]::Firebrick)
 $changed = New-ListGroup 'Changed (re-upload)' 828 ([System.Drawing.Color]::DarkGoldenrod)
 
+$lblFolders = New-Object System.Windows.Forms.Label
+$lblFolders.Text = 'Synced folders:'
+$lblFolders.Location = New-Object System.Drawing.Point(12, 458)
+$lblFolders.Size = New-Object System.Drawing.Size(200, 18)
+$lblFolders.Font = New-Object System.Drawing.Font('Segoe UI', 9, [System.Drawing.FontStyle]::Bold)
+$form.Controls.Add($lblFolders)
+
+$lstFolders = New-Object System.Windows.Forms.ListBox
+$lstFolders.Location = New-Object System.Drawing.Point(12, 478)
+$lstFolders.Size = New-Object System.Drawing.Size(540, 80)
+$lstFolders.Font = New-Object System.Drawing.Font('Consolas', 9)
+$form.Controls.Add($lstFolders)
+
 $lblNotes = New-Object System.Windows.Forms.Label
 $lblNotes.Text = 'Commit message:'
-$lblNotes.Location = New-Object System.Drawing.Point(12, 500)
+$lblNotes.Location = New-Object System.Drawing.Point(12, 566)
 $lblNotes.Size = New-Object System.Drawing.Size(200, 18)
 $form.Controls.Add($lblNotes)
 
 $txtNotes = New-Object System.Windows.Forms.TextBox
-$txtNotes.Location = New-Object System.Drawing.Point(12, 520)
+$txtNotes.Location = New-Object System.Drawing.Point(12, 586)
 $txtNotes.Size = New-Object System.Drawing.Size(812, 24)
 $txtNotes.Text = 'Update modpack'
 $form.Controls.Add($txtNotes)
@@ -121,8 +142,8 @@ $log = New-Object System.Windows.Forms.TextBox
 $log.Multiline = $true
 $log.ScrollBars = 'Vertical'
 $log.ReadOnly = $true
-$log.Location = New-Object System.Drawing.Point(12, 554)
-$log.Size = New-Object System.Drawing.Size(812, 78)
+$log.Location = New-Object System.Drawing.Point(564, 478)
+$log.Size = New-Object System.Drawing.Size(520, 80)
 $log.Font = New-Object System.Drawing.Font('Consolas', 9)
 $log.BackColor = [System.Drawing.Color]::FromArgb(30, 30, 30)
 $log.ForeColor = [System.Drawing.Color]::Gainsboro
@@ -130,13 +151,13 @@ $form.Controls.Add($log)
 
 $btnRefresh = New-Object System.Windows.Forms.Button
 $btnRefresh.Text = 'Refresh diff'
-$btnRefresh.Location = New-Object System.Drawing.Point(836, 520)
+$btnRefresh.Location = New-Object System.Drawing.Point(836, 586)
 $btnRefresh.Size = New-Object System.Drawing.Size(120, 32)
 $form.Controls.Add($btnRefresh)
 
 $btnPublish = New-Object System.Windows.Forms.Button
 $btnPublish.Text = 'Publish'
-$btnPublish.Location = New-Object System.Drawing.Point(964, 520)
+$btnPublish.Location = New-Object System.Drawing.Point(964, 586)
 $btnPublish.Size = New-Object System.Drawing.Size(120, 32)
 $btnPublish.Font = New-Object System.Drawing.Font('Segoe UI', 9, [System.Drawing.FontStyle]::Bold)
 $btnPublish.Enabled = $false
@@ -144,7 +165,7 @@ $form.Controls.Add($btnPublish)
 
 $btnClose = New-Object System.Windows.Forms.Button
 $btnClose.Text = 'Close'
-$btnClose.Location = New-Object System.Drawing.Point(964, 600)
+$btnClose.Location = New-Object System.Drawing.Point(964, 634)
 $btnClose.Size = New-Object System.Drawing.Size(120, 32)
 $btnClose.Add_Click({ $form.Close() })
 $form.Controls.Add($btnClose)
@@ -159,11 +180,10 @@ function Invoke-Gh {
     return @{ Ok = ($LASTEXITCODE -eq 0); Output = ($out -join "`n") }
 }
 
-function Format-Size {
-    param([long]$bytes)
-    if ($bytes -ge 1MB) { return ('{0:N1} MB' -f ($bytes / 1MB)) }
-    if ($bytes -ge 1KB) { return ('{0:N1} KB' -f ($bytes / 1KB)) }
-    return "$bytes B"
+function New-FolderZip {
+    param($folderPath, $destZip)
+    if (Test-Path $destZip) { Remove-Item $destZip -Force }
+    Compress-Archive -Path (Join-Path $folderPath '*') -DestinationPath $destZip -CompressionLevel Optimal -Force
 }
 
 $btnBrowse.Add_Click({
@@ -184,10 +204,11 @@ $btnRefresh.Add_Click({
     $added.List.Items.Clear()
     $removed.List.Items.Clear()
     $changed.List.Items.Clear()
+    $lstFolders.Items.Clear()
     $btnPublish.Enabled = $false
 
     if (-not $GhPath) {
-        Write-Log 'ERROR: gh CLI not found. Install GitHub CLI first.'
+        Write-Log 'ERROR: gh CLI not found.'
         return
     }
     $modsDir = Resolve-ModsDir $script:VersionDir
@@ -197,10 +218,7 @@ $btnRefresh.Add_Click({
     }
 
     Write-Log "Mods folder: $modsDir"
-    Write-Log 'Loading local mods...'
     $local = Get-ChildItem -Path $modsDir -Filter *.jar -File | Sort-Object Name
-    Write-Log "Local: $($local.Count) jars"
-
     foreach ($f in $local) {
         [void]$all.List.Items.Add(("{0}  [{1}]" -f $f.Name, (Format-Size $f.Length)))
     }
@@ -220,21 +238,13 @@ $btnRefresh.Add_Click({
     $remoteMap = @{}
     foreach ($m in $remote.mods) { $remoteMap[$m.filename] = $m }
 
-    $addedList   = @()
-    $removedList = @()
-    $changedList = @()
-
+    $addedList = @(); $removedList = @(); $changedList = @()
     foreach ($name in $localMap.Keys) {
-        if (-not $remoteMap.ContainsKey($name)) {
-            $addedList += $name
-        } elseif ([long]$remoteMap[$name].size -ne $localMap[$name].Length) {
-            $changedList += $name
-        }
+        if (-not $remoteMap.ContainsKey($name)) { $addedList += $name }
+        elseif ([long]$remoteMap[$name].size -ne $localMap[$name].Length) { $changedList += $name }
     }
     foreach ($name in $remoteMap.Keys) {
-        if (-not $localMap.ContainsKey($name)) {
-            $removedList += $name
-        }
+        if (-not $localMap.ContainsKey($name)) { $removedList += $name }
     }
 
     foreach ($n in ($addedList   | Sort-Object)) { [void]$added.List.Items.Add($n) }
@@ -245,24 +255,42 @@ $btnRefresh.Add_Click({
     $removed.Label.Text = "Removed (delete)   $($removedList.Count)"
     $changed.Label.Text = "Changed (re-upload) $($changedList.Count)"
 
+    # Synced folders display (no zip compute here; Publish will do it)
+    $remoteFolders = @{}
+    if ($remote.syncedFolders) {
+        foreach ($f in $remote.syncedFolders) { $remoteFolders[$f.name] = $f }
+    }
+    foreach ($fname in $SyncFolders) {
+        $fpath = Join-Path $script:VersionDir $fname
+        $hasLocal = Test-Path $fpath
+        $remoteInfo = if ($remoteFolders.ContainsKey($fname)) { "published ($([math]::Round($remoteFolders[$fname].size/1MB,2)) MB)" } else { 'not published' }
+        $localInfo = if ($hasLocal) {
+            $files = (Get-ChildItem $fpath -Recurse -File -ErrorAction SilentlyContinue).Count
+            "local ($files files)"
+        } else { 'local (missing)' }
+        [void]$lstFolders.Items.Add(("{0,-12} {1}  |  {2}" -f $fname, $localInfo, $remoteInfo))
+    }
+
     $script:diff = @{
         Added    = $addedList
         Removed  = $removedList
         Changed  = $changedList
         LocalMap = $localMap
         ModsDir  = $modsDir
+        RemoteFolders = $remoteFolders
     }
 
     $hasWork = ($addedList.Count + $removedList.Count + $changedList.Count) -gt 0
-    $btnPublish.Enabled = $hasWork
-    if (-not $hasWork) { Write-Log 'Nothing to publish.' } else { Write-Log 'Diff ready. Review, then Publish.' }
+    # Always allow Publish (folders might need sync even if mods didn't change)
+    $btnPublish.Enabled = $true
+    Write-Log 'Diff ready. Publish will also zip+compare sync folders.'
 })
 
 $btnPublish.Add_Click({
     if (-not $script:diff) { return }
-    $totalOps = $script:diff.Added.Count + $script:diff.Removed.Count + $script:diff.Changed.Count
+    $modsOps = $script:diff.Added.Count + $script:diff.Removed.Count + $script:diff.Changed.Count
     $confirm = [System.Windows.Forms.MessageBox]::Show(
-        "Publish $totalOps change(s) to $RepoSlug@$ReleaseTag?",
+        "Publish $modsOps mod change(s) + zip/compare folders ($($SyncFolders -join ', '))?",
         'Confirm publish',
         [System.Windows.Forms.MessageBoxButtons]::YesNo,
         [System.Windows.Forms.MessageBoxIcon]::Question)
@@ -274,12 +302,14 @@ $btnPublish.Add_Click({
     $btnBrowse.Enabled = $false
 
     try {
+        # Mods: delete removed
         foreach ($name in $script:diff.Removed) {
             Write-Log "- delete asset: $name"
             $r = Invoke-Gh @('release','delete-asset',$ReleaseTag,$name,'--repo',$RepoSlug,'--yes')
             if (-not $r.Ok) { Write-Log "  WARN: $($r.Output)" }
         }
 
+        # Mods: upload added/changed
         $uploads = @($script:diff.Added) + @($script:diff.Changed)
         $i = 0
         foreach ($name in $uploads) {
@@ -290,9 +320,52 @@ $btnPublish.Add_Click({
             if (-not $r.Ok) { Write-Log "  ERROR: $($r.Output)" }
         }
 
+        # Folders: zip each, compare, upload if differ
+        $newFolderEntries = @()
+        foreach ($fname in $SyncFolders) {
+            $fpath = Join-Path $script:VersionDir $fname
+            if (-not (Test-Path $fpath)) {
+                Write-Log "? skip folder (not found): $fname"
+                continue
+            }
+            $tempZip = Join-Path $env:TEMP ("gg-publish-" + $fname + ".zip")
+            Write-Log "* zipping folder: $fname"
+            try {
+                New-FolderZip -folderPath $fpath -destZip $tempZip
+            } catch {
+                Write-Log "  ERROR zipping: $($_.Exception.Message)"
+                continue
+            }
+            $zipSize = (Get-Item $tempZip).Length
+            $assetName = "folder__$fname.zip"
+            $remoteSize = if ($script:diff.RemoteFolders.ContainsKey($fname)) { [long]$script:diff.RemoteFolders[$fname].size } else { -1 }
+
+            if ($zipSize -ne $remoteSize) {
+                Write-Log ("  changed ({0} -> {1}), uploading..." -f (Format-Size ([long][math]::Max(0,$remoteSize))), (Format-Size $zipSize))
+                $uploadSpec = "$tempZip#$assetName"
+                $r = Invoke-Gh @('release','upload',$ReleaseTag,$uploadSpec,'--repo',$RepoSlug,'--clobber')
+                if (-not $r.Ok) {
+                    Write-Log "  ERROR: $($r.Output)"
+                    Remove-Item $tempZip -Force -ErrorAction SilentlyContinue
+                    continue
+                }
+            } else {
+                Write-Log '  unchanged'
+            }
+            $url = "https://github.com/$RepoSlug/releases/download/$ReleaseTag/$assetName"
+            $newFolderEntries += [ordered]@{ name = $fname; url = $url; size = $zipSize }
+            Remove-Item $tempZip -Force -ErrorAction SilentlyContinue
+        }
+
+        # Regenerate manifest (mods) and overlay new folder entries
         Write-Log 'Regenerating manifest.json...'
         $genScript = Join-Path $PSScriptRoot 'build-manifest.ps1'
         & powershell -NoProfile -ExecutionPolicy Bypass -File $genScript -ModsDir $script:diff.ModsDir -ReleaseTag $ReleaseTag -RepoSlug $RepoSlug -OutFile $ManifestLocal | Out-Null
+
+        # Write folder entries into manifest
+        $mf = Get-Content $ManifestLocal -Raw | ConvertFrom-Json
+        $mf | Add-Member -NotePropertyName syncedFolders -NotePropertyValue (@($newFolderEntries)) -Force
+        ($mf | ConvertTo-Json -Depth 6) | Set-Content -Path $ManifestLocal -Encoding UTF8
 
         Write-Log 'git add/commit/push...'
         Push-Location $LocalRepo
@@ -307,10 +380,9 @@ $btnPublish.Add_Click({
         }
 
         Write-Log 'Done.'
-        [System.Windows.Forms.MessageBox]::Show('Published successfully.','GG Publisher',
+        [System.Windows.Forms.MessageBox]::Show('Published.', 'GG Publisher',
             [System.Windows.Forms.MessageBoxButtons]::OK,
             [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
-
         $btnRefresh.PerformClick()
     } catch {
         Write-Log "ERROR: $($_.Exception.Message)"
@@ -322,5 +394,4 @@ $btnPublish.Add_Click({
 })
 
 $form.Add_Shown({ $btnRefresh.PerformClick() })
-
 [void]$form.ShowDialog()

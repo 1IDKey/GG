@@ -2,9 +2,11 @@ Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
 
-$ManifestUrl  = 'https://raw.githubusercontent.com/1IDKey/GG/main/manifest.json'
+$ManifestUrl       = 'https://raw.githubusercontent.com/1IDKey/GG/main/manifest.json'
 $DefaultVersionDir = Join-Path $env:APPDATA '.minecraft\versions\GG'
-$ConfigFile   = Join-Path $PSScriptRoot 'gg-updater.cfg'
+$ConfigFile        = Join-Path $PSScriptRoot 'gg-updater.cfg'
+$IgnoreFile        = Join-Path $PSScriptRoot 'ignore.txt'
+$BackupKeep        = 5
 
 function Load-Config {
     if (Test-Path $ConfigFile) {
@@ -22,8 +24,49 @@ function Resolve-ModsDir {
     if (-not $versionDir) { return $null }
     $sub = Join-Path $versionDir 'mods'
     if (Test-Path $sub) { return $sub }
-    if (Test-Path $versionDir) { return $versionDir }
     return $null
+}
+
+function Load-IgnoreList {
+    if (-not (Test-Path $IgnoreFile)) { return @() }
+    return @(Get-Content $IgnoreFile | ForEach-Object { $_.Trim() } | Where-Object { $_ -and -not $_.StartsWith('#') })
+}
+
+function Test-Ignored {
+    param($name, $patterns)
+    foreach ($p in $patterns) { if ($name -like $p) { return $true } }
+    return $false
+}
+
+function Load-SyncState {
+    param($versionDir)
+    $path = Join-Path $versionDir '.gg-sync-state.json'
+    if (Test-Path $path) {
+        try { return Get-Content $path -Raw | ConvertFrom-Json } catch { return [PSCustomObject]@{} }
+    }
+    return [PSCustomObject]@{}
+}
+
+function Save-SyncState {
+    param($versionDir, $state)
+    $path = Join-Path $versionDir '.gg-sync-state.json'
+    $state | ConvertTo-Json -Depth 4 | Set-Content -Path $path -Encoding UTF8
+}
+
+function New-Backup {
+    param($sourceDir, $versionDir, $label)
+    if (-not (Test-Path $sourceDir)) { return $null }
+    $backupDir = Join-Path $versionDir 'backups'
+    if (-not (Test-Path $backupDir)) { New-Item -ItemType Directory -Path $backupDir | Out-Null }
+    $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+    $zip = Join-Path $backupDir "$label-$stamp.zip"
+    Compress-Archive -Path (Join-Path $sourceDir '*') -DestinationPath $zip -Force
+    # Prune old
+    $all = Get-ChildItem -Path $backupDir -Filter "$label-*.zip" -File | Sort-Object LastWriteTime -Descending
+    if ($all.Count -gt $BackupKeep) {
+        $all | Select-Object -Skip $BackupKeep | ForEach-Object { Remove-Item $_.FullName -Force }
+    }
+    return $zip
 }
 
 $script:VersionDir = Load-Config
@@ -128,15 +171,23 @@ $btnUpdate.Add_Click({
     Set-Current ''
 
     try {
+        if (-not (Test-Path $script:VersionDir)) {
+            Set-Status 'Error: version folder not set. Click Browse.'
+            return
+        }
         $modsDir = Resolve-ModsDir $script:VersionDir
         if (-not $modsDir) {
-            Set-Status 'Error: folder not set. Click Browse to pick your version folder.'
+            Set-Status "Error: no 'mods' subfolder inside version folder."
             return
         }
 
-        Set-Status "Fetching manifest..."
-        Write-Log "Mods folder: $modsDir"
-        Write-Log "Manifest: $ManifestUrl"
+        $ignore = Load-IgnoreList
+        if ($ignore.Count -gt 0) { Write-Log "Ignore patterns: $($ignore.Count) loaded from ignore.txt" }
+
+        Set-Status 'Fetching manifest...'
+        Write-Log "Version folder: $script:VersionDir"
+        Write-Log "Mods folder:    $modsDir"
+        Write-Log "Manifest:       $ManifestUrl"
         $ProgressPreference = 'SilentlyContinue'
         $manifest = Invoke-RestMethod -Uri $ManifestUrl -UseBasicParsing
 
@@ -147,7 +198,10 @@ $btnUpdate.Add_Click({
         $currentMap = @{}
         foreach ($f in $current) { $currentMap[$f.Name] = $f }
 
-        $toDelete   = @($current | Where-Object { -not $wanted.ContainsKey($_.Name) })
+        $toDeleteAll = @($current | Where-Object { -not $wanted.ContainsKey($_.Name) })
+        $toDelete    = @($toDeleteAll | Where-Object { -not (Test-Ignored $_.Name $ignore) })
+        $ignored     = @($toDeleteAll | Where-Object { Test-Ignored $_.Name $ignore })
+
         $toDownload = @()
         foreach ($m in $manifest.mods) {
             if (-not $currentMap.ContainsKey($m.filename)) {
@@ -157,36 +211,54 @@ $btnUpdate.Add_Click({
             }
         }
 
+        # Folder sync planning
+        $state = Load-SyncState $script:VersionDir
+        $folderWork = @()
+        if ($manifest.syncedFolders) {
+            foreach ($entry in $manifest.syncedFolders) {
+                $localSize = $null
+                if ($state.PSObject.Properties[$entry.name]) { $localSize = [long]$state.($entry.name) }
+                if ($localSize -ne [long]$entry.size) {
+                    $folderWork += $entry
+                }
+            }
+        }
+
         Write-Log "Manifest version: $($manifest.version)"
-        Write-Log "In manifest:  $($manifest.mods.Count)"
-        Write-Log "To delete:    $($toDelete.Count)"
-        Write-Log "To download:  $($toDownload.Count)"
+        Write-Log "Mods in manifest: $($manifest.mods.Count)"
+        Write-Log "To delete:        $($toDelete.Count)"
+        Write-Log "To download:      $($toDownload.Count)"
+        Write-Log "Ignored (kept):   $($ignored.Count)"
+        Write-Log "Folders to sync:  $($folderWork.Count)"
         Write-Log ''
 
-        if ($toDelete.Count -eq 0 -and $toDownload.Count -eq 0) {
+        if ($toDelete.Count -eq 0 -and $toDownload.Count -eq 0 -and $folderWork.Count -eq 0) {
             Set-Status 'Already up to date.'
             $progress.Value = 100
             return
+        }
+
+        # Backup mods folder before any change
+        if ($toDelete.Count -gt 0 -or $toDownload.Count -gt 0) {
+            Set-Status 'Creating mods backup...'
+            $backupPath = New-Backup -sourceDir $modsDir -versionDir $script:VersionDir -label 'mods'
+            if ($backupPath) { Write-Log "Backup: $backupPath" }
         }
 
         foreach ($f in $toDelete) {
             Write-Log "- $($f.Name)"
             Remove-Item $f.FullName -Force
         }
+        foreach ($f in $ignored) { Write-Log "= (ignored) $($f.Name)" }
 
-        $total = $toDownload.Count
-        if ($total -eq 0) {
-            Set-Status 'Done.'
-            $progress.Value = 100
-            return
-        }
-
-        Set-Status "Downloading $total mod(s)..."
+        $total = $toDownload.Count + $folderWork.Count
         $i = 0
+
         foreach ($m in $toDownload) {
             $i++
             $dest = Join-Path $modsDir $m.filename
             $sizeMb = if ($m.size) { [math]::Round($m.size / 1MB, 1) } else { '?' }
+            Set-Status "Downloading mod $i of $total..."
             Set-Current "[$i/$total] $($m.filename) ($sizeMb MB)"
             Write-Log "+ $($m.filename)"
             try {
@@ -199,8 +271,44 @@ $btnUpdate.Add_Click({
             [System.Windows.Forms.Application]::DoEvents()
         }
 
+        # Folder sync
+        foreach ($entry in $folderWork) {
+            $i++
+            $folderPath = Join-Path $script:VersionDir $entry.name
+            $sizeMb = [math]::Round($entry.size / 1MB, 2)
+            Set-Status "Syncing folder $($entry.name)..."
+            Set-Current "[$i/$total] folder: $($entry.name) ($sizeMb MB)"
+            Write-Log "* folder: $($entry.name)"
+
+            # Backup existing folder
+            if (Test-Path $folderPath) {
+                $bp = New-Backup -sourceDir $folderPath -versionDir $script:VersionDir -label $entry.name
+                if ($bp) { Write-Log "  backup: $bp" }
+            }
+
+            # Download zip
+            $tempZip = Join-Path $env:TEMP ("gg-sync-" + $entry.name + ".zip")
+            try {
+                Invoke-WebRequest -Uri $entry.url -OutFile $tempZip -UseBasicParsing
+                # Wipe existing folder
+                if (Test-Path $folderPath) { Remove-Item -Path $folderPath -Recurse -Force }
+                New-Item -ItemType Directory -Path $folderPath | Out-Null
+                Expand-Archive -Path $tempZip -DestinationPath $folderPath -Force
+                Remove-Item $tempZip -Force -ErrorAction SilentlyContinue
+                # Update state
+                $state | Add-Member -NotePropertyName $entry.name -NotePropertyValue ([long]$entry.size) -Force
+                Save-SyncState $script:VersionDir $state
+                Write-Log "  ok"
+            } catch {
+                Write-Log "  ERROR: $($_.Exception.Message)"
+                if (Test-Path $tempZip) { Remove-Item $tempZip -Force -ErrorAction SilentlyContinue }
+            }
+            $progress.Value = [int](($i / $total) * 100)
+            [System.Windows.Forms.Application]::DoEvents()
+        }
+
         Set-Current ''
-        Set-Status "Done. Updated $total mod(s)."
+        Set-Status "Done. $total item(s) updated."
     } catch {
         Set-Status "Error: $($_.Exception.Message)"
         Write-Log $_.Exception.Message

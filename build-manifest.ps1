@@ -13,6 +13,15 @@ if (-not (Test-Path $ModsDir)) {
     exit 1
 }
 
+# Preserve syncedFolders from existing manifest, since only publish-gui touches them
+$existingFolders = @()
+if (Test-Path $OutFile) {
+    try {
+        $existing = Get-Content $OutFile -Raw | ConvertFrom-Json
+        if ($existing.syncedFolders) { $existingFolders = @($existing.syncedFolders) }
+    } catch {}
+}
+
 $jars = Get-ChildItem -Path $ModsDir -Filter *.jar -File | Sort-Object Name
 
 $mods = foreach ($j in $jars) {
@@ -24,13 +33,15 @@ $mods = foreach ($j in $jars) {
 }
 
 $manifest = [ordered]@{
-    version = $Version
-    mods    = @($mods)
+    version        = $Version
+    mods           = @($mods)
+    syncedFolders  = @($existingFolders)
 }
 
-$json = $manifest | ConvertTo-Json -Depth 4
+$json = $manifest | ConvertTo-Json -Depth 5
 [System.IO.File]::WriteAllText($OutFile, $json, [System.Text.UTF8Encoding]::new($false))
 
 $totalMb = [math]::Round(($jars | Measure-Object Length -Sum).Sum / 1MB, 1)
 Write-Host "Done: $($jars.Count) mods, $totalMb MB" -ForegroundColor Green
+Write-Host "Preserved syncedFolders: $($existingFolders.Count)"
 Write-Host "Manifest: $OutFile"
