@@ -123,12 +123,25 @@ $lblCurrent.Size = New-Object System.Drawing.Size(600, 20)
 $lblCurrent.ForeColor = [System.Drawing.Color]::DimGray
 $form.Controls.Add($lblCurrent)
 
+$lblFolders = New-Object System.Windows.Forms.Label
+$lblFolders.Text = 'Synced folders:'
+$lblFolders.Location = New-Object System.Drawing.Point(12, 180)
+$lblFolders.Size = New-Object System.Drawing.Size(200, 18)
+$lblFolders.Font = New-Object System.Drawing.Font('Segoe UI', 9, [System.Drawing.FontStyle]::Bold)
+$form.Controls.Add($lblFolders)
+
+$lstFolders = New-Object System.Windows.Forms.ListBox
+$lstFolders.Location = New-Object System.Drawing.Point(12, 200)
+$lstFolders.Size = New-Object System.Drawing.Size(600, 68)
+$lstFolders.Font = New-Object System.Drawing.Font('Consolas', 9)
+$form.Controls.Add($lstFolders)
+
 $log = New-Object System.Windows.Forms.TextBox
 $log.Multiline = $true
 $log.ScrollBars = 'Vertical'
 $log.ReadOnly = $true
-$log.Location = New-Object System.Drawing.Point(12, 180)
-$log.Size = New-Object System.Drawing.Size(600, 250)
+$log.Location = New-Object System.Drawing.Point(12, 278)
+$log.Size = New-Object System.Drawing.Size(600, 152)
 $log.Font = New-Object System.Drawing.Font('Consolas', 9)
 $log.BackColor = [System.Drawing.Color]::FromArgb(30, 30, 30)
 $log.ForeColor = [System.Drawing.Color]::Gainsboro
@@ -214,14 +227,23 @@ $btnUpdate.Add_Click({
         # Folder sync planning
         $state = Load-SyncState $script:VersionDir
         $folderWork = @()
+        $lstFolders.Items.Clear()
         if ($manifest.syncedFolders) {
             foreach ($entry in $manifest.syncedFolders) {
                 $localSize = $null
                 if ($state.PSObject.Properties[$entry.name]) { $localSize = [long]$state.($entry.name) }
-                if ($localSize -ne [long]$entry.size) {
+                $sizeMb = [math]::Round($entry.size / 1MB, 2)
+                if ($localSize -eq [long]$entry.size) {
+                    [void]$lstFolders.Items.Add(("{0,-12} up to date ({1} MB)" -f $entry.name, $sizeMb))
+                } else {
                     $folderWork += $entry
+                    $label = if ($null -eq $localSize) { 'not synced yet' } else { 'needs update' }
+                    [void]$lstFolders.Items.Add(("{0,-12} {1} ({2} MB)" -f $entry.name, $label, $sizeMb))
                 }
             }
+        }
+        if ($lstFolders.Items.Count -eq 0) {
+            [void]$lstFolders.Items.Add('(no folders in manifest)')
         }
 
         Write-Log "Manifest version: $($manifest.version)"
@@ -299,6 +321,13 @@ $btnUpdate.Add_Click({
                 $state | Add-Member -NotePropertyName $entry.name -NotePropertyValue ([long]$entry.size) -Force
                 Save-SyncState $script:VersionDir $state
                 Write-Log "  ok"
+                $sizeMbDone = [math]::Round($entry.size / 1MB, 2)
+                for ($idx = 0; $idx -lt $lstFolders.Items.Count; $idx++) {
+                    if ($lstFolders.Items[$idx].ToString().StartsWith($entry.name)) {
+                        $lstFolders.Items[$idx] = ("{0,-12} up to date ({1} MB)" -f $entry.name, $sizeMbDone)
+                        break
+                    }
+                }
             } catch {
                 Write-Log "  ERROR: $($_.Exception.Message)"
                 if (Test-Path $tempZip) { Remove-Item $tempZip -Force -ErrorAction SilentlyContinue }
