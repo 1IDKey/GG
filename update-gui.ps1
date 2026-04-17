@@ -2,7 +2,7 @@ Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
 
-$ScriptVersion     = '1.2.1'
+$ScriptVersion     = '1.2.2'
 $ManifestUrl       = 'https://raw.githubusercontent.com/1IDKey/GG/main/manifest.json'
 $ScriptRawBase     = 'https://raw.githubusercontent.com/1IDKey/GG/main'
 $DefaultVersionDir = Join-Path $env:APPDATA '.minecraft\versions\GG'
@@ -580,7 +580,7 @@ $btnPlay.Add_Click({
     try {
         [void](Set-TLauncherVersion 'GG')
         Start-Process -FilePath $tl
-        Set-Status "Launched: $tl"
+        $form.Close()
     } catch {
         Set-Status "Launch failed: $($_.Exception.Message)"
     }
