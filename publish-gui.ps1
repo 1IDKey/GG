@@ -249,4 +249,6 @@ $btnPublish.Add_Click({
     }
 })
 
+$form.Add_Shown({ $btnRefresh.PerformClick() })
+
 [void]$form.ShowDialog()
