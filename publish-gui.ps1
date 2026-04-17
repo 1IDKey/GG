@@ -10,6 +10,7 @@ $ManifestLocal = Join-Path $LocalRepo 'manifest.json'
 $ConfigFile    = Join-Path $PSScriptRoot 'gg-publisher.cfg'
 $DefaultVersionDir = Join-Path $env:APPDATA '.minecraft\versions\GG'
 $SyncFolders   = @('config', 'kubejs')  # Edit to add/remove synced folders
+$SetupFiles    = @('GG.jar', 'GG.json', 'TLauncherAdditional.json', 'options.txt')  # Files at version root packed into setup.zip
 
 function Load-Config {
     if (Test-Path $ConfigFile) {
@@ -290,6 +291,7 @@ $btnRefresh.Add_Click({
         LocalMap = $localMap
         ModsDir  = $modsDir
         RemoteFolders = $remoteFolders
+        Remote   = $remote
     }
 
     $hasWork = ($addedList.Count + $removedList.Count + $changedList.Count) -gt 0
@@ -383,14 +385,62 @@ $btnPublish.Add_Click({
             Remove-Item $tempZip -Force -ErrorAction SilentlyContinue
         }
 
+        # Build and upload setup bundle
+        $setupEntry = $null
+        $existingSetupFiles = @()
+        $existingSetupNames = @()
+        foreach ($sf in $SetupFiles) {
+            $full = Join-Path $script:VersionDir $sf
+            if (Test-Path $full) {
+                $existingSetupFiles += $full
+                $existingSetupNames += $sf
+            } else {
+                Write-Log "? setup: missing $sf"
+            }
+        }
+        if ($existingSetupFiles.Count -gt 0) {
+            $setupZip = Join-Path $env:TEMP 'gg-publish-setup.zip'
+            if (Test-Path $setupZip) { Remove-Item $setupZip -Force }
+            Write-Log "* zipping setup bundle ($($existingSetupFiles.Count) files)"
+            try {
+                Compress-Archive -Path $existingSetupFiles -DestinationPath $setupZip -CompressionLevel Optimal -Force
+                $setupSize = (Get-Item $setupZip).Length
+                $setupAsset = 'setup.zip'
+                $remoteSetup = $null
+                if ($script:diff.Remote -and $script:diff.Remote.setup -and $script:diff.Remote.setup.size) {
+                    $remoteSetup = [long]$script:diff.Remote.setup.size
+                }
+                if ($setupSize -ne $remoteSetup) {
+                    Write-Log ("  uploading setup ({0})" -f (Format-Size $setupSize))
+                    $r = Invoke-Gh @('release','upload',$ReleaseTag,"$setupZip#$setupAsset",'--repo',$RepoSlug,'--clobber')
+                    if (-not $r.Ok) { Write-Log "  ERROR: $($r.Output)" }
+                } else {
+                    Write-Log '  unchanged'
+                }
+                $setupEntry = [ordered]@{
+                    url   = "https://github.com/$RepoSlug/releases/download/$ReleaseTag/$setupAsset"
+                    size  = $setupSize
+                    files = @($existingSetupNames)
+                }
+                Remove-Item $setupZip -Force -ErrorAction SilentlyContinue
+            } catch {
+                Write-Log "  ERROR zipping setup: $($_.Exception.Message)"
+            }
+        }
+
         # Regenerate manifest (mods) and overlay new folder entries
         Write-Log 'Regenerating manifest.json...'
         $genScript = Join-Path $PSScriptRoot 'build-manifest.ps1'
         & powershell -NoProfile -ExecutionPolicy Bypass -File $genScript -ModsDir $script:diff.ModsDir -ReleaseTag $ReleaseTag -RepoSlug $RepoSlug -OutFile $ManifestLocal | Out-Null
 
-        # Write folder entries into manifest
+        # Write folder and setup entries into manifest
         $mf = Get-Content $ManifestLocal -Raw | ConvertFrom-Json
         $mf | Add-Member -NotePropertyName syncedFolders -NotePropertyValue (@($newFolderEntries)) -Force
+        if ($setupEntry) {
+            $mf | Add-Member -NotePropertyName setup -NotePropertyValue $setupEntry -Force
+        } elseif ($script:diff.Remote -and $script:diff.Remote.setup) {
+            $mf | Add-Member -NotePropertyName setup -NotePropertyValue $script:diff.Remote.setup -Force
+        }
         ($mf | ConvertTo-Json -Depth 6) | Set-Content -Path $ManifestLocal -Encoding UTF8
 
         Write-Log 'git add/commit/push...'

@@ -13,12 +13,14 @@ if (-not (Test-Path $ModsDir)) {
     exit 1
 }
 
-# Preserve syncedFolders from existing manifest, since only publish-gui touches them
+# Preserve syncedFolders and setup from existing manifest, since only publish-gui touches them
 $existingFolders = @()
+$existingSetup = $null
 if (Test-Path $OutFile) {
     try {
         $existing = Get-Content $OutFile -Raw | ConvertFrom-Json
         if ($existing.syncedFolders) { $existingFolders = @($existing.syncedFolders) }
+        if ($existing.setup) { $existingSetup = $existing.setup }
     } catch {}
 }
 
@@ -37,6 +39,7 @@ $manifest = [ordered]@{
     mods           = @($mods)
     syncedFolders  = @($existingFolders)
 }
+if ($existingSetup) { $manifest.setup = $existingSetup }
 
 $json = $manifest | ConvertTo-Json -Depth 5
 [System.IO.File]::WriteAllText($OutFile, $json, [System.Text.UTF8Encoding]::new($false))

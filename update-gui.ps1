@@ -2,13 +2,35 @@ Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
 
-$ScriptVersion     = '1.1.0'
+$ScriptVersion     = '1.2.0'
 $ManifestUrl       = 'https://raw.githubusercontent.com/1IDKey/GG/main/manifest.json'
 $ScriptRawBase     = 'https://raw.githubusercontent.com/1IDKey/GG/main'
 $DefaultVersionDir = Join-Path $env:APPDATA '.minecraft\versions\GG'
 $ConfigFile        = Join-Path $PSScriptRoot 'gg-updater.cfg'
+$TLauncherCfgFile  = Join-Path $PSScriptRoot 'gg-tlauncher.cfg'
 $IgnoreFile        = Join-Path $PSScriptRoot 'ignore.txt'
 $BackupKeep        = 5
+
+function Find-TLauncher {
+    $candidates = @(
+        (Join-Path $env:APPDATA '.minecraft\TLauncher.exe'),
+        (Join-Path $env:APPDATA 'TLauncher\TLauncher.exe'),
+        (Join-Path $env:LOCALAPPDATA 'TLauncher\TLauncher.exe'),
+        (Join-Path $env:USERPROFILE 'Desktop\TLauncher.exe')
+    )
+    foreach ($c in $candidates) { if (Test-Path $c) { return $c } }
+    return $null
+}
+
+function Load-TLauncherPath {
+    if (Test-Path $TLauncherCfgFile) {
+        $p = (Get-Content $TLauncherCfgFile -Raw -ErrorAction SilentlyContinue).Trim()
+        if ($p -and (Test-Path $p)) { return $p }
+    }
+    return (Find-TLauncher)
+}
+
+function Save-TLauncherPath { param($p) Set-Content -Path $TLauncherCfgFile -Value $p -Encoding ASCII }
 
 function Test-MinecraftRunning {
     try {
@@ -185,6 +207,13 @@ $btnRestore.Location = New-Object System.Drawing.Point(12, 440)
 $btnRestore.Size = New-Object System.Drawing.Size(140, 32)
 $form.Controls.Add($btnRestore)
 
+$btnPlay = New-Object System.Windows.Forms.Button
+$btnPlay.Text = 'Play'
+$btnPlay.Location = New-Object System.Drawing.Point(337, 440)
+$btnPlay.Size = New-Object System.Drawing.Size(90, 32)
+$btnPlay.Font = New-Object System.Drawing.Font('Segoe UI', 9, [System.Drawing.FontStyle]::Bold)
+$form.Controls.Add($btnPlay)
+
 $btnUpdate = New-Object System.Windows.Forms.Button
 $btnUpdate.Text = 'Update'
 $btnUpdate.Location = New-Object System.Drawing.Point(432, 440)
@@ -217,18 +246,15 @@ $btnUpdate.Add_Click({
     $btnUpdate.Enabled = $false
     $btnClose.Enabled = $false
     $btnBrowse.Enabled = $false
+    $btnRestore.Enabled = $false
+    $btnPlay.Enabled = $false
     $log.Clear()
     $progress.Value = 0
     Set-Current ''
 
     try {
-        if (-not (Test-Path $script:VersionDir)) {
-            Set-Status 'Error: version folder not set. Click Browse.'
-            return
-        }
-        $modsDir = Resolve-ModsDir $script:VersionDir
-        if (-not $modsDir) {
-            Set-Status "Error: no 'mods' subfolder inside version folder."
+        if (-not $script:VersionDir) {
+            Set-Status 'Error: click Browse to pick or create a version folder.'
             return
         }
         if (Test-MinecraftRunning) {
@@ -241,15 +267,61 @@ $btnUpdate.Add_Click({
             return
         }
 
+        # Ensure version folder exists (create on first install)
+        if (-not (Test-Path $script:VersionDir)) {
+            try { New-Item -ItemType Directory -Path $script:VersionDir -Force | Out-Null } catch {
+                Set-Status "Cannot create: $script:VersionDir"
+                return
+            }
+        }
+
         $ignore = Load-IgnoreList
         if ($ignore.Count -gt 0) { Write-Log "Ignore patterns: $($ignore.Count) loaded from ignore.txt" }
 
         Set-Status 'Fetching manifest...'
         Write-Log "Version folder: $script:VersionDir"
-        Write-Log "Mods folder:    $modsDir"
         Write-Log "Manifest:       $ManifestUrl"
         $ProgressPreference = 'SilentlyContinue'
         $manifest = Invoke-RestMethod -Uri $ManifestUrl -UseBasicParsing
+
+        # First install check
+        $ggJar = Join-Path $script:VersionDir 'GG.jar'
+        if (-not (Test-Path $ggJar)) {
+            if (-not $manifest.setup -or -not $manifest.setup.url) {
+                Set-Status 'Version not installed and admin has not published a setup bundle.'
+                return
+            }
+            $setupMb = [math]::Round($manifest.setup.size / 1MB, 1)
+            $ans = [System.Windows.Forms.MessageBox]::Show(
+                "First install detected.`n`nGG version files will be downloaded ($setupMb MB) into:`n$script:VersionDir`n`nThen all mods (manifest says $($manifest.mods.Count) mods) will be synced.`n`nContinue?",
+                'First install',
+                [System.Windows.Forms.MessageBoxButtons]::YesNo,
+                [System.Windows.Forms.MessageBoxIcon]::Question)
+            if ($ans -ne [System.Windows.Forms.DialogResult]::Yes) {
+                Set-Status 'Install cancelled.'
+                return
+            }
+            Set-Status 'Downloading setup bundle...'
+            Write-Log "+ setup.zip ($setupMb MB)"
+            $tmpSetup = Join-Path $env:TEMP 'gg-setup.zip'
+            try {
+                Invoke-WebRequest -Uri $manifest.setup.url -OutFile $tmpSetup -UseBasicParsing
+                Write-Log 'Extracting setup...'
+                Expand-Archive -Path $tmpSetup -DestinationPath $script:VersionDir -Force
+                Remove-Item $tmpSetup -Force -ErrorAction SilentlyContinue
+                Write-Log 'Setup installed.'
+            } catch {
+                Set-Status "Setup failed: $($_.Exception.Message)"
+                Write-Log $_.Exception.Message
+                if (Test-Path $tmpSetup) { Remove-Item $tmpSetup -Force -ErrorAction SilentlyContinue }
+                return
+            }
+        }
+
+        # Ensure mods subfolder exists
+        $modsDir = Join-Path $script:VersionDir 'mods'
+        if (-not (Test-Path $modsDir)) { New-Item -ItemType Directory -Path $modsDir -Force | Out-Null }
+        Write-Log "Mods folder:    $modsDir"
 
         $wanted = @{}
         foreach ($m in $manifest.mods) { $wanted[$m.filename] = $m }
@@ -392,6 +464,8 @@ $btnUpdate.Add_Click({
         $btnUpdate.Enabled = $true
         $btnClose.Enabled = $true
         $btnBrowse.Enabled = $true
+        $btnRestore.Enabled = $true
+        $btnPlay.Enabled = $true
     }
 })
 
@@ -465,6 +539,24 @@ $lnkVersion.Add_LinkClicked({
         $form.Close()
     } catch {
         [System.Windows.Forms.MessageBox]::Show("Update failed: $($_.Exception.Message)", 'Error', 'OK', 'Error') | Out-Null
+    }
+})
+
+$btnPlay.Add_Click({
+    $tl = Load-TLauncherPath
+    if (-not $tl -or -not (Test-Path $tl)) {
+        $dlg = New-Object System.Windows.Forms.OpenFileDialog
+        $dlg.Title = 'Locate TLauncher.exe'
+        $dlg.Filter = 'TLauncher (TLauncher*.exe)|TLauncher*.exe|All exe|*.exe'
+        if ($dlg.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { return }
+        $tl = $dlg.FileName
+        Save-TLauncherPath $tl
+    }
+    try {
+        Start-Process -FilePath $tl -ArgumentList @('--version','GG')
+        Set-Status "Launched: $tl"
+    } catch {
+        Set-Status "Launch failed: $($_.Exception.Message)"
     }
 })
 
